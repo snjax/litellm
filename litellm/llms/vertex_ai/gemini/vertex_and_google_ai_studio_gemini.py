@@ -28,6 +28,7 @@ from litellm._uuid import uuid
 from litellm.constants import (
     DEFAULT_REASONING_EFFORT_DISABLE_THINKING_BUDGET,
     DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET,
+    DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET_GEMINI_2_5_PRO,
     DEFAULT_REASONING_EFFORT_LOW_THINKING_BUDGET,
     DEFAULT_REASONING_EFFORT_MEDIUM_THINKING_BUDGET,
     DEFAULT_REASONING_EFFORT_MINIMAL_THINKING_BUDGET,
@@ -595,8 +596,13 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
                 "includeThoughts": True,
             }
         elif reasoning_effort == "high":
+            # For Gemini 2.5 Pro, map `high` to the max supported thinking budget (32,768)
+            if model and "gemini-2.5-pro" in model.lower():
+                budget = DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET_GEMINI_2_5_PRO
+            else:
+                budget = DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET
             return {
-                "thinkingBudget": DEFAULT_REASONING_EFFORT_HIGH_THINKING_BUDGET,
+                "thinkingBudget": budget,
                 "includeThoughts": True,
             }
         elif reasoning_effort == "disable":
