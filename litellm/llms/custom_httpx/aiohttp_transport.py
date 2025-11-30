@@ -3,7 +3,7 @@ import contextlib
 import os
 import typing
 import urllib.request
-from typing import Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, Optional, Union
 
 import aiohttp
 import aiohttp.client_exceptions
@@ -246,22 +246,39 @@ class LiteLLMAiohttpTransport(AiohttpTransport):
             data = request.stream  # type: ignore
             request.headers.pop("transfer-encoding", None)  # handled by aiohttp
 
-        response = await client_session.request(
-            method=request.method,
-            url=YarlURL(str(request.url), encoded=True),
-            headers=request.headers,
-            data=data,
-            allow_redirects=False,
-            auto_decompress=False,
-            timeout=ClientTimeout(
+        # Determine if this is an HTTP (non-HTTPS) request
+        # For HTTP requests, we need to explicitly disable SSL to avoid 
+        # any SSL context interference (important for internal Docker hosts)
+        is_http = str(request.url).startswith("http://")
+        
+        # Build request kwargs
+        request_kwargs: Dict[str, Any] = {
+            "method": request.method,
+            "url": YarlURL(str(request.url), encoded=True),
+            "headers": request.headers,
+            "data": data,
+            "allow_redirects": False,
+            "auto_decompress": False,
+            "timeout": ClientTimeout(
                 total=timeout.get("read"),
                 sock_connect=timeout.get("connect"),
                 sock_read=timeout.get("read"),
                 connect=timeout.get("pool"),
             ),
-            proxy=proxy,
-            server_hostname=sni_hostname,
-        ).__aenter__()
+            "proxy": proxy,
+        }
+        
+        # Only set server_hostname for HTTPS requests (SSL/TLS SNI)
+        # Setting it for HTTP requests can cause aiohttp to attempt SSL
+        if not is_http and sni_hostname:
+            request_kwargs["server_hostname"] = sni_hostname
+        
+        # For HTTP requests, explicitly disable SSL to ensure plain HTTP connections
+        # This is important for internal Docker/Kubernetes hosts using http://
+        if is_http:
+            request_kwargs["ssl"] = False
+
+        response = await client_session.request(**request_kwargs).__aenter__()
         
         return response
     

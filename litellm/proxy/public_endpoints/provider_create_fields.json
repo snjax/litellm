@@ -1194,17 +1194,27 @@
     "litellm_provider": "gemini",
     "credential_fields": [
       {
+        "key": "api_base",
+        "label": "API Base",
+        "placeholder": "https://generativelanguage.googleapis.com",
+        "tooltip": "Custom API base URL. Default: https://generativelanguage.googleapis.com",
+        "required": false,
+        "field_type": "text",
+        "options": null,
+        "default_value": null
+      },
+      {
         "key": "api_key",
-        "label": "API Key",
-        "placeholder": "aig-",
-        "tooltip": null,
+        "label": "Gemini API Key",
+        "placeholder": "AIza...",
+        "tooltip": "Your Google AI Studio API key (starts with AIza...)",
         "required": true,
         "field_type": "password",
         "options": null,
         "default_value": null
       }
     ],
-    "default_model_placeholder": "gemini-pro"
+    "default_model_placeholder": "gemini-2.5-flash"
   },
   {
     "provider": "GradientAI",

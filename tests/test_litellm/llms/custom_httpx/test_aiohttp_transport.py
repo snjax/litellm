@@ -360,3 +360,151 @@ async def test_handle_session_closed_during_request():
     assert counts["requests"] == 2  # First request failed, second succeeded
     assert counts["sessions"] == 2  # Created 2 sessions for retry
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_http_request_has_ssl_disabled():
+    """Test that HTTP (non-HTTPS) requests have ssl=False set explicitly.
+    
+    This is important for internal Docker/Kubernetes hosts using single-word domains
+    like 'gemini-flex-api' that should work over plain HTTP without SSL context interference.
+    """
+    import asyncio
+    
+    captured_kwargs = {}
+    
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = None
+        
+        def request(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            
+            class Resp:
+                status = 200
+                headers = {}
+                
+                async def __aenter__(self):
+                    return self
+                
+                async def __aexit__(self, exc_type, exc, tb):
+                    pass
+                
+                @property
+                def content(self):
+                    class C:
+                        async def iter_chunked(self, size):
+                            yield b"test"
+                    return C()
+            
+            return Resp()
+    
+    transport = LiteLLMAiohttpTransport(client=lambda: FakeSession())  # type: ignore
+    
+    # Test HTTP URL (single-word Docker host)
+    http_request = httpx.Request("POST", "http://gemini-flex-api/v1beta/models/gemini-2.5-flash:generateContent")
+    await transport.handle_async_request(http_request)
+    
+    # For HTTP requests, ssl should be explicitly set to False
+    assert captured_kwargs.get("ssl") is False, "HTTP request should have ssl=False"
+    # server_hostname should NOT be set for HTTP requests
+    assert "server_hostname" not in captured_kwargs, "HTTP request should not have server_hostname"
+
+
+@pytest.mark.asyncio
+async def test_https_request_allows_ssl():
+    """Test that HTTPS requests don't have ssl=False set, allowing normal SSL behavior."""
+    import asyncio
+    
+    captured_kwargs = {}
+    
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = None
+        
+        def request(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            
+            class Resp:
+                status = 200
+                headers = {}
+                
+                async def __aenter__(self):
+                    return self
+                
+                async def __aexit__(self, exc_type, exc, tb):
+                    pass
+                
+                @property
+                def content(self):
+                    class C:
+                        async def iter_chunked(self, size):
+                            yield b"test"
+                    return C()
+            
+            return Resp()
+    
+    transport = LiteLLMAiohttpTransport(client=lambda: FakeSession())  # type: ignore
+    
+    # Test HTTPS URL
+    https_request = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")
+    await transport.handle_async_request(https_request)
+    
+    # For HTTPS requests, ssl should NOT be set to False
+    assert captured_kwargs.get("ssl") is not False, "HTTPS request should not have ssl=False"
+
+
+@pytest.mark.asyncio 
+async def test_https_request_with_sni_hostname():
+    """Test that HTTPS requests can set server_hostname for SNI."""
+    import asyncio
+    
+    captured_kwargs = {}
+    
+    class FakeSession:
+        def __init__(self):
+            self.closed = False
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = None
+        
+        def request(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            
+            class Resp:
+                status = 200
+                headers = {}
+                
+                async def __aenter__(self):
+                    return self
+                
+                async def __aexit__(self, exc_type, exc, tb):
+                    pass
+                
+                @property
+                def content(self):
+                    class C:
+                        async def iter_chunked(self, size):
+                            yield b"test"
+                    return C()
+            
+            return Resp()
+    
+    transport = LiteLLMAiohttpTransport(client=lambda: FakeSession())  # type: ignore
+    
+    # Test HTTPS URL with SNI hostname
+    https_request = httpx.Request("POST", "https://api.example.com/chat")
+    https_request.extensions["sni_hostname"] = "api.example.com"
+    await transport.handle_async_request(https_request)
+    
+    # For HTTPS requests with sni_hostname, server_hostname should be set
+    assert captured_kwargs.get("server_hostname") == "api.example.com", "HTTPS request should have server_hostname from sni_hostname"

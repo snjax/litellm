@@ -937,3 +937,117 @@ class TestVertexBase:
         )
         assert result_auth_header == expected_auth_header
         assert result_url == expected_url
+
+
+class TestGeminiApiBaseIsolation:
+    """
+    Tests to ensure Gemini api_base is correctly isolated and does not inherit OpenAI defaults.
+    """
+
+    def test_gemini_api_base_does_not_use_openai_default(self):
+        """
+        Verify that Gemini models do NOT use OpenAI's default api_base.
+        This ensures there's no leakage between providers.
+        """
+        from litellm.llms.gemini.common_utils import GeminiModelInfo
+        
+        # When no api_base is provided, Gemini should use its own default, not OpenAI's
+        gemini_api_base = GeminiModelInfo.get_api_base(api_base=None)
+        
+        # Gemini default should be generativelanguage.googleapis.com
+        assert gemini_api_base == "https://generativelanguage.googleapis.com"
+        # Should NOT be OpenAI's default
+        assert "openai" not in gemini_api_base.lower()
+        assert "api.openai.com" not in gemini_api_base
+
+    def test_gemini_custom_api_base_is_respected(self):
+        """
+        Verify that a custom api_base for Gemini is correctly used.
+        """
+        from litellm.llms.gemini.common_utils import GeminiModelInfo
+        
+        custom_base = "https://my-custom-proxy.example.com/v1beta"
+        gemini_api_base = GeminiModelInfo.get_api_base(api_base=custom_base)
+        
+        assert gemini_api_base == custom_base
+
+    def test_gemini_url_construction_with_custom_api_base(self):
+        """
+        Test that the complete URL for Gemini is constructed correctly with a custom api_base.
+        """
+        vertex_base = VertexBase()
+        
+        custom_api_base = "https://my-proxy.example.com/gemini"
+        model = "gemini-2.5-flash"
+        endpoint = "generateContent"
+        
+        auth_header, result_url = vertex_base._check_custom_proxy(
+            api_base=custom_api_base,
+            custom_llm_provider="gemini",
+            gemini_api_key="test-api-key",
+            endpoint=endpoint,
+            stream=False,
+            auth_header=None,
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{endpoint}",
+            model=model,
+        )
+        
+        # Implementation adds /v1beta/models/... to the api_base
+        expected_url = f"{custom_api_base}/v1beta/models/{model}:{endpoint}"
+        assert result_url == expected_url
+        # Verify auth header is set correctly for Gemini
+        assert auth_header == {"x-goog-api-key": "test-api-key"}
+
+    def test_gemini_api_base_from_env_variable(self):
+        """
+        Test that GEMINI_API_BASE environment variable is respected.
+        """
+        import os
+        from litellm.llms.gemini.common_utils import GeminiModelInfo
+        
+        # Save original value
+        original_value = os.environ.get("GEMINI_API_BASE")
+        
+        try:
+            # Set custom env var
+            os.environ["GEMINI_API_BASE"] = "https://env-custom-proxy.example.com"
+            
+            # Should use env var when no explicit api_base is provided
+            gemini_api_base = GeminiModelInfo.get_api_base(api_base=None)
+            assert gemini_api_base == "https://env-custom-proxy.example.com"
+            
+            # Explicit api_base should override env var
+            gemini_api_base = GeminiModelInfo.get_api_base(api_base="https://explicit.example.com")
+            assert gemini_api_base == "https://explicit.example.com"
+        finally:
+            # Restore original value
+            if original_value is None:
+                os.environ.pop("GEMINI_API_BASE", None)
+            else:
+                os.environ["GEMINI_API_BASE"] = original_value
+
+    def test_gemini_streaming_url_with_custom_api_base(self):
+        """
+        Test that streaming URLs are correctly constructed with ?alt=sse for custom api_base.
+        """
+        vertex_base = VertexBase()
+        
+        custom_api_base = "https://my-proxy.example.com/gemini"
+        model = "gemini-2.5-flash"
+        endpoint = "generateContent"
+        
+        # Test with streaming enabled
+        _, result_url = vertex_base._check_custom_proxy(
+            api_base=custom_api_base,
+            custom_llm_provider="gemini",
+            gemini_api_key="test-api-key",
+            endpoint=endpoint,
+            stream=True,
+            auth_header=None,
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{endpoint}",
+            model=model,
+        )
+        
+        # Implementation adds /v1beta/models/... to the api_base
+        expected_url = f"{custom_api_base}/v1beta/models/{model}:{endpoint}?alt=sse"
+        assert result_url == expected_url

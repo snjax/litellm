@@ -299,11 +299,15 @@ class VertexBase:
         if api_base:
             if custom_llm_provider == "gemini":
                 # For Gemini (Google AI Studio), construct the full path like other providers
+                # api_base should be like https://generativelanguage.googleapis.com (without /v1beta)
+                # The /v1beta path is added automatically to match the standard Gemini API format
                 if model is None:
                     raise ValueError(
                         "Model parameter is required for Gemini custom API base URLs"
                     )
-                url = "{}/models/{}:{}".format(api_base, model, endpoint)
+                # Normalize api_base: remove trailing slash
+                api_base = api_base.rstrip("/")
+                url = "{}/v1beta/models/{}:{}".format(api_base, model, endpoint)
                 if gemini_api_key is None:
                     raise ValueError(
                         "Missing gemini_api_key, please set `GEMINI_API_KEY`"

@@ -22,12 +22,21 @@ router = APIRouter()
 class CredentialHelperUtils:
     @staticmethod
     def encrypt_credential_values(credential: CredentialItem) -> CredentialItem:
-        """Encrypt values in credential.credential_values and add to DB"""
+        """
+        Encrypt values in credential.credential_values for DB storage.
+        
+        Returns a NEW CredentialItem with encrypted values - does NOT modify the original.
+        """
         encrypted_credential_values = {}
         for key, value in credential.credential_values.items():
             encrypted_credential_values[key] = encrypt_value_helper(value)
-        credential.credential_values = encrypted_credential_values
-        return credential
+        
+        # Return a NEW CredentialItem - don't modify the original!
+        return CredentialItem(
+            credential_name=credential.credential_name,
+            credential_values=encrypted_credential_values,
+            credential_info=credential.credential_info,
+        )
 
 
 @router.post(
