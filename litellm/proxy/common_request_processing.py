@@ -50,6 +50,47 @@ from litellm.proxy.litellm_pre_call_utils import add_litellm_data_to_request
 from litellm.types.utils import ModelResponse, ModelResponseStream, Usage
 
 
+class ClientDisconnectedError(Exception):
+    """Raised when the client disconnects during a request."""
+    pass
+
+
+async def _check_client_disconnection(
+    request: Request,
+    llm_call_task: asyncio.Task,
+    check_interval: float = 0.5,
+    max_duration: float = 600.0,
+) -> None:
+    """
+    Monitors for client disconnection and cancels the LLM call task if detected.
+    
+    Args:
+        request: FastAPI Request object to check for disconnection
+        llm_call_task: The asyncio Task running the LLM API call
+        check_interval: How often to check for disconnection (seconds)
+        max_duration: Maximum time to run this check (seconds)
+    
+    Raises:
+        ClientDisconnectedError: When client disconnects
+    """
+    import time
+    start_time = time.time()
+    
+    while time.time() - start_time < max_duration:
+        await asyncio.sleep(check_interval)
+        
+        if await request.is_disconnected():
+            verbose_proxy_logger.warning(
+                "Client disconnected - cancelling LLM API call"
+            )
+            llm_call_task.cancel()
+            raise ClientDisconnectedError("Client disconnected the request")
+        
+        # If the LLM call completed, stop checking
+        if llm_call_task.done():
+            return
+
+
 async def _parse_event_data_for_error(event_line: Union[str, bytes]) -> Optional[int]:
     """Parses an event line and returns an error code if present, else None."""
     event_line = (
@@ -521,20 +562,61 @@ class ProxyBaseLLMRequestProcessing:
 
         ### ROUTE THE REQUEST ###
         # Do not change this - it should be a constant time fetch - ALWAYS
-        llm_call = await route_request(
+        llm_call_coro = await route_request(
             data=self.data,
             route_type=route_type,
             llm_router=llm_router,
             user_model=user_model,
         )
-        tasks.append(llm_call)
+        
+        # Determine if this is a streaming request
+        is_stream = is_streaming_request or self.data.get("stream", False)
+        
+        # For non-streaming requests, wrap the LLM call in a task so we can cancel it
+        # if client disconnects. For streaming requests, disconnection is handled
+        # by the streaming generator itself.
+        disconnection_checker_task = None
+        
+        if not is_stream and asyncio.iscoroutine(llm_call_coro):
+            # Create a task for the LLM call so we can cancel it if client disconnects
+            llm_call_task = asyncio.create_task(llm_call_coro)
+            tasks.append(llm_call_task)
+            
+            # Create disconnection checker task
+            disconnection_checker_task = asyncio.create_task(
+                _check_client_disconnection(
+                    request=request,
+                    llm_call_task=llm_call_task,
+                    check_interval=0.5,
+                )
+            )
+        else:
+            # Streaming or non-coroutine result - use original behavior
+            tasks.append(llm_call_coro)
 
         # wait for call to end
-        llm_responses = asyncio.gather(
-            *tasks
-        )  # run the moderation check in parallel to the actual llm api call
+        try:
+            llm_responses = asyncio.gather(
+                *tasks
+            )  # run the moderation check in parallel to the actual llm api call
 
-        responses = await llm_responses
+            responses = await llm_responses
+        except asyncio.CancelledError:
+            verbose_proxy_logger.warning(
+                "LLM API call cancelled - client disconnected"
+            )
+            raise HTTPException(
+                status_code=499,
+                detail="Client disconnected the request",
+            )
+        finally:
+            # Cancel the disconnection checker if it's still running
+            if disconnection_checker_task is not None and not disconnection_checker_task.done():
+                disconnection_checker_task.cancel()
+                try:
+                    await disconnection_checker_task
+                except (asyncio.CancelledError, ClientDisconnectedError):
+                    pass
 
         response = responses[1]
 

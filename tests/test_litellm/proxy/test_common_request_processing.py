@@ -1,3 +1,4 @@
+import asyncio
 import copy
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,8 +10,10 @@ import litellm
 from litellm._uuid import uuid
 from litellm.integrations.opentelemetry import UserAPIKeyAuth
 from litellm.proxy.common_request_processing import (
+    ClientDisconnectedError,
     ProxyBaseLLMRequestProcessing,
     ProxyConfig,
+    _check_client_disconnection,
     _get_cost_breakdown_from_logging_obj,
     _parse_event_data_for_error,
     create_streaming_response,
@@ -636,3 +639,163 @@ class TestCommonRequestProcessingHelpers:
                 assert (
                     args[0] == "streaming.chunk.yield"
                 ), f"Call {i} should have operation name 'streaming.chunk.yield', got {args[0]}"
+
+
+@pytest.mark.asyncio
+class TestClientDisconnection:
+    """Tests for client disconnection handling in non-streaming requests."""
+
+    async def test_check_client_disconnection_cancels_task_on_disconnect(self):
+        """
+        Test that _check_client_disconnection cancels the LLM call task 
+        when the client disconnects.
+        """
+        # Create a mock request that will report disconnected after first check
+        mock_request = MagicMock(spec=Request)
+        disconnect_called = False
+        
+        async def mock_is_disconnected():
+            nonlocal disconnect_called
+            if not disconnect_called:
+                disconnect_called = True
+                return False  # First check: not disconnected
+            return True  # Subsequent checks: disconnected
+        
+        mock_request.is_disconnected = mock_is_disconnected
+        
+        # Create a long-running task that we can cancel
+        async def long_running_task():
+            await asyncio.sleep(10)  # This should get cancelled
+            return "completed"
+        
+        llm_task = asyncio.create_task(long_running_task())
+        
+        # Run the disconnection checker - it should cancel the task
+        with pytest.raises(ClientDisconnectedError):
+            await _check_client_disconnection(
+                request=mock_request,
+                llm_call_task=llm_task,
+                check_interval=0.1,
+            )
+        
+        # Verify the task was cancelled (need to wait for cancellation to propagate)
+        try:
+            await llm_task
+            pytest.fail("Task should have been cancelled")
+        except asyncio.CancelledError:
+            pass  # Expected - task was cancelled
+
+    async def test_check_client_disconnection_stops_when_task_completes(self):
+        """
+        Test that _check_client_disconnection stops checking when the 
+        LLM call task completes normally.
+        """
+        mock_request = MagicMock(spec=Request)
+        mock_request.is_disconnected = AsyncMock(return_value=False)
+        
+        # Create a task that completes quickly
+        async def quick_task():
+            await asyncio.sleep(0.05)
+            return "completed"
+        
+        llm_task = asyncio.create_task(quick_task())
+        
+        # Run the disconnection checker with a longer check interval
+        # The task should complete before the checker runs its second iteration
+        checker_task = asyncio.create_task(
+            _check_client_disconnection(
+                request=mock_request,
+                llm_call_task=llm_task,
+                check_interval=0.2,
+            )
+        )
+        
+        # Wait for the LLM task to complete
+        result = await llm_task
+        assert result == "completed"
+        
+        # Give the checker a chance to notice the task is done
+        await asyncio.sleep(0.3)
+        
+        # The checker should have returned without raising
+        assert checker_task.done()
+        # Should not have raised an exception
+        try:
+            checker_task.result()
+        except asyncio.CancelledError:
+            pass  # This is acceptable - it was cancelled
+        except ClientDisconnectedError:
+            pytest.fail("Checker raised ClientDisconnectedError but client was not disconnected")
+
+    async def test_check_client_disconnection_no_disconnect(self):
+        """
+        Test that _check_client_disconnection doesn't cancel task when client 
+        stays connected and task completes.
+        """
+        mock_request = MagicMock(spec=Request)
+        mock_request.is_disconnected = AsyncMock(return_value=False)
+        
+        # Create a task that completes quickly
+        task_completed = False
+        
+        async def task_that_completes():
+            nonlocal task_completed
+            await asyncio.sleep(0.05)
+            task_completed = True
+            return "done"
+        
+        llm_task = asyncio.create_task(task_that_completes())
+        
+        # Start the disconnection checker
+        checker = asyncio.create_task(
+            _check_client_disconnection(
+                request=mock_request,
+                llm_call_task=llm_task,
+                check_interval=0.1,
+            )
+        )
+        
+        # Wait for task to complete
+        result = await llm_task
+        assert result == "done"
+        assert task_completed
+        
+        # Cancel the checker since the task completed
+        checker.cancel()
+        try:
+            await checker
+        except asyncio.CancelledError:
+            pass
+
+    async def test_client_disconnected_error_message(self):
+        """Test that ClientDisconnectedError has the correct message."""
+        error = ClientDisconnectedError("Client disconnected the request")
+        assert str(error) == "Client disconnected the request"
+
+    async def test_check_client_disconnection_immediate_disconnect(self):
+        """
+        Test behavior when client is already disconnected at first check.
+        """
+        mock_request = MagicMock(spec=Request)
+        mock_request.is_disconnected = AsyncMock(return_value=True)  # Already disconnected
+        
+        async def long_task():
+            await asyncio.sleep(10)
+            return "should not complete"
+        
+        llm_task = asyncio.create_task(long_task())
+        
+        # The first check (after check_interval) should detect disconnection
+        with pytest.raises(ClientDisconnectedError):
+            await _check_client_disconnection(
+                request=mock_request,
+                llm_call_task=llm_task,
+                check_interval=0.05,
+            )
+        
+        # Task should be cancelled (need to wait for cancellation to propagate)
+        try:
+            await llm_task
+            pytest.fail("Task should have been cancelled")
+        except asyncio.CancelledError:
+            pass  # Expected - task was cancelled
