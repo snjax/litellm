@@ -119,3 +119,5 @@ class TestCredentialHelperUtils:
         assert encrypted_credential.credential_values == {}
         mock_encrypt.assert_not_called()
 
+
+

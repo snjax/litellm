@@ -39,7 +39,9 @@ from litellm.constants import (
     DEFAULT_SLACK_ALERTING_THRESHOLD,
     LITELLM_EMBEDDING_PROVIDERS_SUPPORTING_INPUT_ARRAY_OF_TOKENS,
     LITELLM_SETTINGS_SAFE_DB_OVERRIDES,
+    TCP_KEEPALIVE_ENABLED,
 )
+from litellm.llms.custom_httpx.tcp_keepalive import create_keepalive_socket_factory
 from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
 from litellm.proxy.common_utils.callback_utils import normalize_callback_names
 from litellm.proxy.common_utils.realtime_utils import _realtime_request_body
@@ -628,12 +630,20 @@ async def _initialize_shared_aiohttp_session():
     try:
         from aiohttp import ClientSession, TCPConnector
 
+        # Add TCP keepalive socket factory for long-running connections
+        # This keeps connections alive through firewalls/load balancers during extended model thinking
+        socket_factory = None
+        if TCP_KEEPALIVE_ENABLED:
+            socket_factory = create_keepalive_socket_factory()
+            verbose_proxy_logger.debug("TCP keepalive enabled for shared aiohttp session")
+
         # Create connector with connection pooling settings optimized for long-lived connections
         connector = TCPConnector(
             limit=AIOHTTP_CONNECTOR_LIMIT,
             keepalive_timeout=AIOHTTP_KEEPALIVE_TIMEOUT,
             ttl_dns_cache=AIOHTTP_TTL_DNS_CACHE,
             enable_cleanup_closed=True,
+            socket_factory=socket_factory,
         )
 
         session = ClientSession(connector=connector)

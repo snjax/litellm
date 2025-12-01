@@ -452,7 +452,8 @@ async def acompletion(
 
     Notes:
         - This function is an asynchronous version of the `completion` function.
-        - The `completion` function is called using `run_in_executor` to execute synchronously in the event loop.
+        - The `completion` function is called directly (not via run_in_executor) to ensure proper cancellation.
+        - When acompletion=True, completion() returns a coroutine that is properly awaited.
         - If `stream` is True, the function returns an async generator that yields completion lines.
     """
     fallbacks = kwargs.get("fallbacks", None)
@@ -587,14 +588,19 @@ async def acompletion(
         await asyncio.sleep(mock_delay)
 
     try:
-        # Use a partial function to pass your keyword arguments
-        func = partial(completion, **completion_kwargs, **kwargs)
+        # Call completion directly without run_in_executor
+        # When acompletion=True, completion() returns a coroutine that we can await
+        # This ensures proper cancellation propagation when client disconnects
+        #
+        # Previously used run_in_executor which prevented cancellation:
+        # - run_in_executor runs sync code in a thread pool
+        # - task.cancel() only cancels the await, NOT the thread
+        # - The thread continues running even after cancellation
+        #
+        # Now we call completion() directly which returns a coroutine when acompletion=True
+        # Awaiting this coroutine properly propagates cancellation to the HTTP client
+        init_response = completion(**completion_kwargs, **kwargs)
 
-        # Add the context to the function
-        ctx = contextvars.copy_context()
-        func_with_context = partial(ctx.run, func)
-
-        init_response = await loop.run_in_executor(None, func_with_context)
         if isinstance(init_response, dict) or isinstance(
             init_response, ModelResponse
         ):  ## CACHING SCENARIO
@@ -619,6 +625,8 @@ async def acompletion(
                 loop=loop
             )  # sets the logging event loop if the user does sync streaming (e.g. on proxy for sagemaker calls)
         return response
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         custom_llm_provider = custom_llm_provider or "openai"
         raise exception_type(
@@ -3949,27 +3957,21 @@ async def aembedding(*args, **kwargs) -> EmbeddingResponse:
     Returns:
     - `response` (Any): The response returned by the `embedding` function.
     """
-    loop = asyncio.get_event_loop()
     model = args[0] if len(args) > 0 else kwargs["model"]
     ### PASS ARGS TO Embedding ###
     kwargs["aembedding"] = True
     custom_llm_provider = kwargs.get("custom_llm_provider", None)
     try:
-        # Use a partial function to pass your keyword arguments
-        func = partial(embedding, *args, **kwargs)
-
-        # Add the context to the function
-        ctx = contextvars.copy_context()
-        func_with_context = partial(ctx.run, func)
-
         _, custom_llm_provider, _, _ = get_llm_provider(
             model=model,
             custom_llm_provider=custom_llm_provider,
             api_base=kwargs.get("api_base", None),
         )
 
-        # Await normally
-        init_response = await loop.run_in_executor(None, func_with_context)
+        # Call embedding directly without run_in_executor
+        # When aembedding=True, embedding() returns a coroutine that we can await
+        # This ensures proper cancellation propagation when client disconnects
+        init_response = embedding(*args, **kwargs)
 
         response: Optional[EmbeddingResponse] = None
         if isinstance(init_response, dict):
@@ -3990,6 +3992,8 @@ async def aembedding(*args, **kwargs) -> EmbeddingResponse:
                 "Unable to get Embedding Response. Please pass a valid llm_provider."
             )
         return response
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         custom_llm_provider = custom_llm_provider or "openai"
         raise exception_type(
@@ -4978,20 +4982,16 @@ async def atext_completion(
     """
     Implemented to handle async streaming for the text completion endpoint
     """
-    loop = asyncio.get_event_loop()
     model = args[0] if len(args) > 0 else kwargs["model"]
     ### PASS ARGS TO COMPLETION ###
     kwargs["acompletion"] = True
     custom_llm_provider = None
     try:
-        # Use a partial function to pass your keyword arguments
-        func = partial(text_completion, *args, **kwargs)
+        # Call text_completion directly without run_in_executor
+        # When acompletion=True, text_completion() returns a coroutine that we can await
+        # This ensures proper cancellation propagation when client disconnects
+        init_response = text_completion(*args, **kwargs)
 
-        # Add the context to the function
-        ctx = contextvars.copy_context()
-        func_with_context = partial(ctx.run, func)
-
-        init_response = await loop.run_in_executor(None, func_with_context)
         if isinstance(init_response, dict) or isinstance(
             init_response, TextCompletionResponse
         ):  ## CACHING SCENARIO
@@ -5523,26 +5523,21 @@ async def atranscription(*args, **kwargs) -> TranscriptionResponse:
 
     Allows router to load balance between them
     """
-    loop = asyncio.get_event_loop()
     model = args[0] if len(args) > 0 else kwargs["model"]
     ### PASS ARGS TO Image Generation ###
     kwargs["atranscription"] = True
     file = kwargs.get("file", None)
     custom_llm_provider = None
     try:
-        # Use a partial function to pass your keyword arguments
-        func = partial(transcription, *args, **kwargs)
-
-        # Add the context to the function
-        ctx = contextvars.copy_context()
-        func_with_context = partial(ctx.run, func)
-
         _, custom_llm_provider, _, _ = get_llm_provider(
             model=model, api_base=kwargs.get("api_base", None)
         )
 
-        # Await normally
-        init_response = await loop.run_in_executor(None, func_with_context)
+        # Call transcription directly without run_in_executor
+        # When atranscription=True, transcription() returns a coroutine that we can await
+        # This ensures proper cancellation propagation when client disconnects
+        init_response = transcription(*args, **kwargs)
+
         if isinstance(init_response, dict):
             response = TranscriptionResponse(**init_response)
         elif isinstance(init_response, TranscriptionResponse):  ## CACHING SCENARIO
@@ -5550,8 +5545,7 @@ async def atranscription(*args, **kwargs) -> TranscriptionResponse:
         elif asyncio.iscoroutine(init_response):
             response = await init_response  # type: ignore
         else:
-            # Call the synchronous function using run_in_executor
-            response = await loop.run_in_executor(None, func_with_context)
+            response = init_response  # type: ignore
         if not isinstance(response, TranscriptionResponse):
             raise ValueError(
                 f"Invalid response from transcription provider, expected TranscriptionResponse, but got {type(response)}"
@@ -5571,6 +5565,8 @@ async def atranscription(*args, **kwargs) -> TranscriptionResponse:
                     setattr(response, "duration", calculated_duration)
 
         return response
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         custom_llm_provider = custom_llm_provider or "openai"
         raise exception_type(
@@ -5803,31 +5799,27 @@ async def aspeech(*args, **kwargs) -> HttpxBinaryResponseContent:
     """
     Calls openai tts endpoints.
     """
-    loop = asyncio.get_event_loop()
     model = args[0] if len(args) > 0 else kwargs["model"]
     ### PASS ARGS TO Image Generation ###
     kwargs["aspeech"] = True
     custom_llm_provider = kwargs.get("custom_llm_provider", None)
     try:
-        # Use a partial function to pass your keyword arguments
-        func = partial(speech, *args, **kwargs)
-
-        # Add the context to the function
-        ctx = contextvars.copy_context()
-        func_with_context = partial(ctx.run, func)
-
         _, custom_llm_provider, _, _ = get_llm_provider(
             model=model, api_base=kwargs.get("api_base", None)
         )
 
-        # Await normally
-        init_response = await loop.run_in_executor(None, func_with_context)
+        # Call speech directly without run_in_executor
+        # When aspeech=True, speech() returns a coroutine that we can await
+        # This ensures proper cancellation propagation when client disconnects
+        init_response = speech(*args, **kwargs)
+
         if asyncio.iscoroutine(init_response):
             response = await init_response
         else:
-            # Call the synchronous function using run_in_executor
-            response = await loop.run_in_executor(None, func_with_context)
+            response = init_response
         return response  # type: ignore
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         custom_llm_provider = custom_llm_provider or "openai"
         raise exception_type(

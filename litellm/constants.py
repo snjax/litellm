@@ -116,12 +116,55 @@ RUNWAYML_POLLING_TIMEOUT = int(
 )  # 10 minutes default for image generation
 
 ########## Networking constants ##############################################################
-_DEFAULT_TTL_FOR_HTTPX_CLIENTS = 3600  # 1 hour, re-use the same httpx client for 1 hour
+# Default timeout for long-running LLM requests (5 hours = 18000 seconds)
+# This is suitable for models with extended thinking/reasoning that can take hours
+DEFAULT_LITELLM_TIMEOUT = float(os.getenv("DEFAULT_LITELLM_TIMEOUT", 18000))
+
+# TTL for cached httpx clients - should be >= max expected request duration
+# For 4+ hour model runs, set this to at least 5 hours (18000 seconds)
+_DEFAULT_TTL_FOR_HTTPX_CLIENTS = int(
+    os.getenv("HTTPX_CLIENT_TTL", 18000)
+)  # 5 hours default, re-use the same httpx client
+
+# Default httpx timeout settings for creating new clients
+# These are used when no explicit timeout is provided
+DEFAULT_HTTPX_TIMEOUT = float(os.getenv("DEFAULT_HTTPX_TIMEOUT", 18000))  # 5 hours
+DEFAULT_HTTPX_CONNECT_TIMEOUT = float(os.getenv("DEFAULT_HTTPX_CONNECT_TIMEOUT", 30.0))  # 30 seconds for connection
 
 # Aiohttp connection pooling constants
 AIOHTTP_CONNECTOR_LIMIT = int(os.getenv("AIOHTTP_CONNECTOR_LIMIT", 0))
+# Note: AIOHTTP_KEEPALIVE_TIMEOUT is the idle timeout for connections in the pool,
+# NOT a ping interval. It doesn't affect active requests.
 AIOHTTP_KEEPALIVE_TIMEOUT = int(os.getenv("AIOHTTP_KEEPALIVE_TIMEOUT", 120))
 AIOHTTP_TTL_DNS_CACHE = int(os.getenv("AIOHTTP_TTL_DNS_CACHE", 300))
+
+# Default timeout for aiohttp-based handlers (5 hours for long-running requests)
+AIOHTTP_DEFAULT_TIMEOUT = int(os.getenv("AIOHTTP_DEFAULT_TIMEOUT", 18000))
+
+# TCP Keepalive settings for long-running connections
+# These send periodic TCP probes to keep the connection alive through firewalls/load balancers
+# and detect dead connections early. Critical for models that think for hours.
+#
+# How it works:
+# 1. After TCP_KEEPALIVE_IDLE seconds of no data, OS sends first keepalive probe
+# 2. If no response, OS sends probes every TCP_KEEPALIVE_INTERVAL seconds
+# 3. After TCP_KEEPALIVE_COUNT failed probes, connection is considered dead
+#
+# With defaults (60s idle, 30s interval, 5 probes): dead connection detected in ~210 seconds
+TCP_KEEPALIVE_ENABLED = os.getenv("TCP_KEEPALIVE_ENABLED", "true").lower() in ("true", "1", "yes")
+TCP_KEEPALIVE_IDLE = int(os.getenv("TCP_KEEPALIVE_IDLE", 60))  # seconds before first probe
+TCP_KEEPALIVE_INTERVAL = int(os.getenv("TCP_KEEPALIVE_INTERVAL", 30))  # seconds between probes
+TCP_KEEPALIVE_COUNT = int(os.getenv("TCP_KEEPALIVE_COUNT", 5))  # probes before connection is dead
+
+# Client disconnection check settings for proxy server
+# This monitors if the client disconnects during long-running LLM requests
+# and cancels the upstream request to avoid wasting resources
+CLIENT_DISCONNECT_CHECK_INTERVAL = float(
+    os.getenv("CLIENT_DISCONNECT_CHECK_INTERVAL", 0.5)
+)  # How often to check for client disconnection (seconds)
+CLIENT_DISCONNECT_CHECK_MAX_DURATION = float(
+    os.getenv("CLIENT_DISCONNECT_CHECK_MAX_DURATION", 18000)
+)  # Maximum duration to monitor for disconnection (5 hours, matches other timeouts)
 
 # WebSocket constants
 # Default to None (unlimited) to match OpenAI's official agents SDK behavior
@@ -279,7 +322,8 @@ MAX_SIZE_PER_ITEM_IN_MEMORY_CACHE_IN_KB = int(
 )
 DEFAULT_MAX_TOKENS_FOR_TRITON = int(os.getenv("DEFAULT_MAX_TOKENS_FOR_TRITON", 2000))
 #### Networking settings ####
-request_timeout: float = float(os.getenv("REQUEST_TIMEOUT", 6000))  # time in seconds
+# Global request timeout - should be long enough for extended thinking models (5 hours default)
+request_timeout: float = float(os.getenv("REQUEST_TIMEOUT", 18000))  # 5 hours in seconds
 STREAM_SSE_DONE_STRING: str = "[DONE]"
 STREAM_SSE_DATA_PREFIX: str = "data: "
 ### SPEND TRACKING ###

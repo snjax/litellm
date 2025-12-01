@@ -1263,6 +1263,7 @@ class Router:
                 response = await self.schedule_acompletion(**kwargs)
             else:
                 response = await self.async_function_with_fallbacks(**kwargs)
+
             end_time = time.perf_counter()
             _duration = end_time - start_time
             asyncio.create_task(
@@ -1277,6 +1278,8 @@ class Router:
             )
 
             return response
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             asyncio.create_task(
                 send_llm_exception_alert(
@@ -1436,6 +1439,7 @@ class Router:
         _timeout_debug_deployment_dict = (
             {}
         )  # this is a temporary dict to debug timeout issues
+
         try:
             input_kwargs_for_streaming_fallback = kwargs.copy()
             input_kwargs_for_streaming_fallback["model"] = model
@@ -1519,7 +1523,6 @@ class Router:
                     logging_obj=logging_obj,
                     parent_otel_span=parent_otel_span,
                 )
-
                 response = await _response
 
             ## CHECK CONTENT FILTER ERROR ##
@@ -1553,6 +1556,8 @@ class Router:
                 )
 
             return response
+        except asyncio.CancelledError:
+            raise
         except litellm.Timeout as e:
             deployment_request_timeout_param = _timeout_debug_deployment_dict.get(
                 "litellm_params", {}
@@ -4282,12 +4287,15 @@ class Router:
                 )
             else:
                 response = await self.async_function_with_retries(*args, **kwargs)
+
             verbose_router_logger.debug(f"Async Response: {response}")
             response = add_fallback_headers_to_response(
                 response=response,
                 attempted_fallbacks=0,
             )
             return response
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             return await self.async_function_with_fallbacks_common_utils(
                 e,
@@ -4382,6 +4390,8 @@ class Router:
                 response=response, attempted_retries=0, max_retries=None
             )
             return response
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             current_attempt = None
             original_exception = e
@@ -4494,10 +4504,11 @@ class Router:
         """
         model_group = kwargs.get("model")
         response = original_function(*args, **kwargs)
-        if coroutine_checker.is_async_callable(response) or inspect.isawaitable(
-            response
-        ):
+
+        is_awaitable = coroutine_checker.is_async_callable(response) or inspect.isawaitable(response)
+        if is_awaitable:
             response = await response
+
         ## PROCESS RESPONSE HEADERS
         response = await self.set_response_headers(
             response=response, model_group=model_group

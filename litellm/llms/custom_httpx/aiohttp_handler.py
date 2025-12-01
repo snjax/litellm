@@ -8,6 +8,7 @@ import litellm
 import litellm.litellm_core_utils
 import litellm.types
 import litellm.types.utils
+from litellm.constants import AIOHTTP_DEFAULT_TIMEOUT
 from litellm.llms.base_llm.chat.transformation import BaseConfig
 from litellm.llms.base_llm.image_variations.transformation import (
     BaseImageVariationConfig,
@@ -29,7 +30,8 @@ if TYPE_CHECKING:
 else:
     LiteLLMLoggingObj = Any
 
-DEFAULT_TIMEOUT = 600
+# Use constant from litellm.constants for long-running model support
+DEFAULT_TIMEOUT = AIOHTTP_DEFAULT_TIMEOUT
 
 
 class BaseLLMAIOHTTPHandler:

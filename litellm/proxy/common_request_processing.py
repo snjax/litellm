@@ -23,6 +23,8 @@ import litellm
 from litellm._logging import verbose_proxy_logger
 from litellm._uuid import uuid
 from litellm.constants import (
+    CLIENT_DISCONNECT_CHECK_INTERVAL,
+    CLIENT_DISCONNECT_CHECK_MAX_DURATION,
     DD_TRACER_STREAMING_CHUNK_YIELD_RESOURCE,
     STREAM_SSE_DATA_PREFIX,
 )
@@ -58,8 +60,8 @@ class ClientDisconnectedError(Exception):
 async def _check_client_disconnection(
     request: Request,
     llm_call_task: asyncio.Task,
-    check_interval: float = 0.5,
-    max_duration: float = 600.0,
+    check_interval: float = CLIENT_DISCONNECT_CHECK_INTERVAL,
+    max_duration: float = CLIENT_DISCONNECT_CHECK_MAX_DURATION,
 ) -> None:
     """
     Monitors for client disconnection and cancels the LLM call task if detected.
@@ -75,19 +77,36 @@ async def _check_client_disconnection(
     """
     import time
     start_time = time.time()
-    
+
     while time.time() - start_time < max_duration:
         await asyncio.sleep(check_interval)
-        
-        if await request.is_disconnected():
+        elapsed = time.time() - start_time
+
+        # Check task state first
+        task_done = llm_call_task.done()
+
+        # Check if client disconnected
+        is_disconnected = await request.is_disconnected()
+
+        if is_disconnected:
             verbose_proxy_logger.warning(
-                "Client disconnected - cancelling LLM API call"
+                f"Client disconnected after {elapsed:.1f}s - cancelling LLM request"
             )
-            llm_call_task.cancel()
+
+            if not task_done:
+                llm_call_task.cancel()
+                # Give the task a moment to process the cancellation
+                try:
+                    await asyncio.wait_for(asyncio.shield(llm_call_task), timeout=0.1)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception:
+                    pass
+
             raise ClientDisconnectedError("Client disconnected the request")
-        
+
         # If the LLM call completed, stop checking
-        if llm_call_task.done():
+        if task_done:
             return
 
 
@@ -568,26 +587,26 @@ class ProxyBaseLLMRequestProcessing:
             llm_router=llm_router,
             user_model=user_model,
         )
-        
+
         # Determine if this is a streaming request
         is_stream = is_streaming_request or self.data.get("stream", False)
-        
+
         # For non-streaming requests, wrap the LLM call in a task so we can cancel it
         # if client disconnects. For streaming requests, disconnection is handled
         # by the streaming generator itself.
         disconnection_checker_task = None
-        
+        llm_call_task = None
+
         if not is_stream and asyncio.iscoroutine(llm_call_coro):
             # Create a task for the LLM call so we can cancel it if client disconnects
             llm_call_task = asyncio.create_task(llm_call_coro)
             tasks.append(llm_call_task)
-            
+
             # Create disconnection checker task
             disconnection_checker_task = asyncio.create_task(
                 _check_client_disconnection(
                     request=request,
                     llm_call_task=llm_call_task,
-                    check_interval=0.5,
                 )
             )
         else:
@@ -602,9 +621,11 @@ class ProxyBaseLLMRequestProcessing:
 
             responses = await llm_responses
         except asyncio.CancelledError:
-            verbose_proxy_logger.warning(
-                "LLM API call cancelled - client disconnected"
+            raise HTTPException(
+                status_code=499,
+                detail="Client disconnected the request",
             )
+        except ClientDisconnectedError:
             raise HTTPException(
                 status_code=499,
                 detail="Client disconnected the request",

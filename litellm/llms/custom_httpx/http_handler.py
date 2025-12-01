@@ -18,8 +18,12 @@ from litellm.constants import (
     AIOHTTP_CONNECTOR_LIMIT,
     AIOHTTP_KEEPALIVE_TIMEOUT,
     AIOHTTP_TTL_DNS_CACHE,
+    DEFAULT_HTTPX_CONNECT_TIMEOUT,
+    DEFAULT_HTTPX_TIMEOUT,
     DEFAULT_SSL_CIPHERS,
+    TCP_KEEPALIVE_ENABLED,
 )
+from litellm.llms.custom_httpx.tcp_keepalive import create_keepalive_socket_factory
 from litellm.litellm_core_utils.logging_utils import track_llm_api_timing
 from litellm.types.llms.custom_http import *
 
@@ -44,7 +48,10 @@ headers = {
 }
 
 # https://www.python-httpx.org/advanced/timeouts
-_DEFAULT_TIMEOUT = httpx.Timeout(timeout=5.0, connect=5.0)
+# Use constants from litellm.constants for long-running model support
+_DEFAULT_TIMEOUT = httpx.Timeout(
+    timeout=DEFAULT_HTTPX_TIMEOUT, connect=DEFAULT_HTTPX_CONNECT_TIMEOUT
+)
 
 
 def _prepare_request_data_and_content(
@@ -382,6 +389,8 @@ class AsyncHTTPHandler:
         files: Optional[RequestFiles] = None,
         content: Any = None,
     ):
+        import asyncio
+        
         start_time = time.time()
         try:
             if timeout is None:
@@ -389,7 +398,7 @@ class AsyncHTTPHandler:
 
             # Prepare data/content parameters to prevent httpx DeprecationWarning (memory leak fix)
             request_data, request_content = _prepare_request_data_and_content(data, content)
-                
+
             req = self.client.build_request(
                 "POST",
                 url,
@@ -400,11 +409,14 @@ class AsyncHTTPHandler:
                 timeout=timeout,
                 files=files,
                 content=request_content,
-            )        
+            )
+
             response = await self.client.send(req, stream=stream)
             response.raise_for_status()
             return response
-        except (httpx.RemoteProtocolError, httpx.ConnectError):
+        except asyncio.CancelledError:
+            raise
+        except (httpx.RemoteProtocolError, httpx.ConnectError) as e:
             # Retry the request with a new session if there is a connection error
             new_client = self.create_client(
                 timeout=timeout, event_hooks=self.event_hooks
@@ -792,6 +804,14 @@ class AsyncHTTPHandler:
         verbose_logger.debug(
             "NEW SESSION: Creating new ClientSession (no shared session provided)"
         )
+        
+        # Add TCP keepalive socket factory for long-running connections
+        # This keeps connections alive through firewalls/load balancers during extended model thinking
+        socket_factory = None
+        if TCP_KEEPALIVE_ENABLED:
+            socket_factory = create_keepalive_socket_factory()
+            verbose_logger.debug("TCP keepalive enabled for aiohttp connections")
+        
         return LiteLLMAiohttpTransport(
             client=lambda: ClientSession(
                 connector=TCPConnector(
@@ -799,6 +819,7 @@ class AsyncHTTPHandler:
                     keepalive_timeout=AIOHTTP_KEEPALIVE_TIMEOUT,
                     ttl_dns_cache=AIOHTTP_TTL_DNS_CACHE,
                     enable_cleanup_closed=True,
+                    socket_factory=socket_factory,
                     **connector_kwargs,
                 ),
                 trust_env=trust_env,
