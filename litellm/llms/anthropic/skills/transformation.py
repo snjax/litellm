@@ -75,6 +75,8 @@ class AnthropicSkillsConfig(BaseSkillsAPIConfig):
 
         if api_base is None:
             api_base = AnthropicModelInfo.get_api_base()
+        
+        api_base = api_base.rstrip("/") if api_base else api_base
 
         if skill_id:
             return f"{api_base}/v1/skills/{skill_id}?beta=true"

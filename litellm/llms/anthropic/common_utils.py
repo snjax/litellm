@@ -380,6 +380,7 @@ class AnthropicModelInfo(BaseLLMModelInfo):
             raise ValueError(
                 "ANTHROPIC_API_BASE or ANTHROPIC_API_KEY is not set. Please set the environment variable, to query Anthropic's `/models` endpoint."
             )
+        api_base = api_base.rstrip("/")
         response = litellm.module_level_client.get(
             url=f"{api_base}/v1/models",
             headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},

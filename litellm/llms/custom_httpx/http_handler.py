@@ -398,7 +398,7 @@ class AsyncHTTPHandler:
 
             # Prepare data/content parameters to prevent httpx DeprecationWarning (memory leak fix)
             request_data, request_content = _prepare_request_data_and_content(data, content)
-
+                
             req = self.client.build_request(
                 "POST",
                 url,
@@ -409,7 +409,7 @@ class AsyncHTTPHandler:
                 timeout=timeout,
                 files=files,
                 content=request_content,
-            )
+            )        
 
             response = await self.client.send(req, stream=stream)
             response.raise_for_status()

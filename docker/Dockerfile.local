@@ -1,0 +1,66 @@
+# Dockerfile for local development with fast rebuilds
+# Usage:
+#   docker build -f docker/Dockerfile.local -t litellm-local .
+#   docker run -v $(pwd)/litellm:/app/litellm -p 4000:4000 litellm-local
+#
+# When you edit Python files, just restart the container - no rebuild needed!
+
+ARG LITELLM_BUILD_IMAGE=python:3.13-slim
+
+FROM $LITELLM_BUILD_IMAGE
+
+WORKDIR /app
+
+USER root
+
+# Layer 1: System dependencies (rarely changes)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libssl-dev \
+    pkg-config \
+    libssl3 \
+    libatomic1 \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --upgrade pip
+
+# Layer 2: Python dependencies from requirements.txt (changes occasionally)
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# Layer 3: JWT fix (applied once after dependencies, stays cached)
+RUN pip uninstall jwt -y || true && \
+    pip uninstall PyJWT -y || true && \
+    pip install PyJWT==2.9.0 --no-cache-dir
+
+# Layer 4: Project metadata for editable install
+COPY pyproject.toml README.md schema.prisma poetry.lock ./
+
+# Layer 5: Create minimal stub directories for editable install
+# Must match packages in pyproject.toml: litellm and litellm/py.typed
+RUN mkdir -p litellm enterprise && \
+    touch litellm/__init__.py litellm/py.typed enterprise/__init__.py
+
+# Layer 6: Editable install WITHOUT dependencies (deps already installed above)
+# This only registers the package path
+RUN pip install -e . --no-deps
+
+# Layer 7: Generate prisma client (depends on schema.prisma)
+RUN prisma generate
+
+# Layer 8: Entrypoints (rarely change)
+COPY docker/entrypoint.sh docker/prod_entrypoint.sh ./docker/
+RUN chmod +x docker/entrypoint.sh docker/prod_entrypoint.sh
+
+# Layer 9: Source code - LAST layer so changes only rebuild this layer
+# pip install -e already registered the path, so no reinstall needed
+COPY litellm/ ./litellm/
+COPY enterprise/ ./enterprise/
+
+EXPOSE 4000/tcp
+
+ENTRYPOINT ["litellm"]
+CMD ["--port", "4000"]

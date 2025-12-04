@@ -27,7 +27,7 @@ from litellm.utils import ProviderConfigManager, client
 
 # Initialize HTTP handler
 base_llm_http_handler = BaseLLMHTTPHandler()
-DEFAULT_ANTHROPIC_API_BASE = "https://api.anthropic.com/v1"
+DEFAULT_ANTHROPIC_API_BASE = "https://api.anthropic.com"
 
 
 @client

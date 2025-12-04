@@ -51,7 +51,7 @@ class AnthropicMessagesConfig(BaseAnthropicMessagesConfig):
     ) -> str:
         api_base = api_base or DEFAULT_ANTHROPIC_API_BASE
         if not api_base.endswith("/v1/messages"):
-            api_base = f"{api_base}/v1/messages"
+            api_base = api_base.rstrip("/") + "/v1/messages"
         return api_base
 
     def validate_anthropic_messages_environment(

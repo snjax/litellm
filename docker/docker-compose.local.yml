@@ -1,0 +1,32 @@
+# Docker Compose for local development with hot reload
+#
+# Usage:
+#   cd docker
+#   docker compose -f docker-compose.local.yml up --build
+#
+# After initial build, when you edit Python files:
+#   - Just restart the container: docker compose -f docker-compose.local.yml restart litellm
+#   - No rebuild needed!
+
+services:
+  litellm:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.local
+    ports:
+      - "4000:4000"
+    volumes:
+      # Mount source code - changes are reflected immediately on restart
+      - ../litellm:/app/litellm:ro
+      - ../enterprise:/app/enterprise:ro
+      # Optional: mount config file
+      # - ./litellm_config.yaml:/app/config.yaml:ro
+    environment:
+      - LITELLM_LOG=DEBUG
+      # Add your API keys here or use .env file
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+    # Uncomment to use config file:
+    # command: ["--port", "4000", "--config", "/app/config.yaml"]
+    restart: unless-stopped
+

@@ -77,7 +77,7 @@ async def _check_client_disconnection(
     """
     import time
     start_time = time.time()
-
+    
     while time.time() - start_time < max_duration:
         await asyncio.sleep(check_interval)
         elapsed = time.time() - start_time
@@ -104,7 +104,7 @@ async def _check_client_disconnection(
                     pass
 
             raise ClientDisconnectedError("Client disconnected the request")
-
+        
         # If the LLM call completed, stop checking
         if task_done:
             return
@@ -587,21 +587,21 @@ class ProxyBaseLLMRequestProcessing:
             llm_router=llm_router,
             user_model=user_model,
         )
-
+        
         # Determine if this is a streaming request
         is_stream = is_streaming_request or self.data.get("stream", False)
-
+        
         # For non-streaming requests, wrap the LLM call in a task so we can cancel it
         # if client disconnects. For streaming requests, disconnection is handled
         # by the streaming generator itself.
         disconnection_checker_task = None
         llm_call_task = None
-
+        
         if not is_stream and asyncio.iscoroutine(llm_call_coro):
             # Create a task for the LLM call so we can cancel it if client disconnects
             llm_call_task = asyncio.create_task(llm_call_coro)
             tasks.append(llm_call_task)
-
+            
             # Create disconnection checker task
             disconnection_checker_task = asyncio.create_task(
                 _check_client_disconnection(
