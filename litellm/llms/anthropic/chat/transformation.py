@@ -724,6 +724,10 @@ class AnthropicConfig(AnthropicModelInfo, BaseConfig):
                     optional_params["thinking"] = AnthropicConfig._map_reasoning_effort(
                         value
                     )
+                # Set default max_tokens for reasoning models if not provided
+                # Skip for "none" as it disables reasoning
+                if value != "none" and "max_tokens" not in optional_params and "max_tokens" not in non_default_params:
+                    optional_params["max_tokens"] = 64000
             elif param == "web_search_options" and isinstance(value, dict):
                 hosted_web_search_tool = self.map_web_search_tool(
                     cast(OpenAIWebSearchOptions, value)

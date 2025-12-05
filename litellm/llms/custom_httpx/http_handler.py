@@ -450,11 +450,13 @@ class AsyncHTTPHandler:
             )
         except httpx.HTTPStatusError as e:
             if stream is True:
-                setattr(e, "message", await e.response.aread())
-                setattr(e, "text", await e.response.aread())
+                error_body = await e.response.aread()
+                setattr(e, "message", error_body)
+                setattr(e, "text", error_body)
             else:
-                setattr(e, "message", mask_sensitive_info(e.response.text))
-                setattr(e, "text", mask_sensitive_info(e.response.text))
+                error_text = mask_sensitive_info(e.response.text)
+                setattr(e, "message", error_text)
+                setattr(e, "text", error_text)
 
             setattr(e, "status_code", e.response.status_code)
 
