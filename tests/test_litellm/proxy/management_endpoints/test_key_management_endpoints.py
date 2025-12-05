@@ -2613,3 +2613,148 @@ def test_check_org_key_model_specific_limits_org_model_tpm_overallocation():
         "Allocated TPM limit=17000 + Key TPM limit=4000 is greater than organization TPM limit=20000"
         in str(exc_info.value.detail)
     )
+
+
+class TestCustomKeyGeneration:
+    """Tests for custom key value functionality.
+    
+    These tests verify that the key parameter in GenerateKeyRequest
+    allows users to specify their own custom key value instead of
+    auto-generating one.
+    """
+
+    def test_generate_key_request_accepts_custom_key(self):
+        """
+        Test that GenerateKeyRequest model accepts a custom key parameter.
+        """
+        custom_key = "sk-my-custom-key-value-12345"
+        
+        # This should not raise validation error
+        request = GenerateKeyRequest(
+            key=custom_key,
+            models=["gpt-4"],
+        )
+        
+        assert request.key == custom_key
+
+    def test_generate_key_request_key_is_optional(self):
+        """
+        Test that the key parameter is optional in GenerateKeyRequest.
+        """
+        # This should not raise validation error - key is optional
+        request = GenerateKeyRequest(
+            models=["gpt-4"],
+        )
+        
+        assert request.key is None
+
+    @pytest.mark.asyncio
+    async def test_generate_key_helper_uses_custom_key_when_provided(self):
+        """
+        Test that generate_key_helper_fn uses the provided custom key value
+        for the token instead of auto-generating one.
+        
+        This verifies the code path:
+        if token is None:
+            if key is not None:
+                token = key  # <-- This path should be taken
+        """
+        import litellm.proxy.proxy_server as proxy_server
+        
+        custom_key_value = "sk-my-custom-key-12345"
+        
+        # Mock prisma client
+        mock_prisma_client = AsyncMock()
+        mock_insert_data = AsyncMock()
+        mock_insert_data.return_value = MagicMock(
+            token=custom_key_value,
+            created_at=None,
+            updated_at=None,
+            litellm_budget_table=None,
+        )
+        mock_prisma_client.insert_data = mock_insert_data
+        mock_prisma_client.db = MagicMock()
+        
+        # Save original values
+        original_prisma = getattr(proxy_server, 'prisma_client', None)
+        original_premium = getattr(proxy_server, 'premium_user', None)
+        
+        try:
+            # Set mocks
+            proxy_server.prisma_client = mock_prisma_client
+            proxy_server.premium_user = False
+            
+            result = await generate_key_helper_fn(
+                request_type="key",
+                key=custom_key_value,  # Custom key value
+                user_id="test-user",
+                models=["gpt-4"],
+            )
+            
+            # Verify insert was called
+            assert mock_insert_data.called
+            
+            # Get the data passed to insert_data
+            insert_call_args = mock_insert_data.call_args
+            key_data = insert_call_args.kwargs.get("data", {})
+            
+            # The token in the key data should be the custom key
+            assert key_data.get("token") == custom_key_value
+            
+        finally:
+            # Restore original values
+            proxy_server.prisma_client = original_prisma
+            proxy_server.premium_user = original_premium
+
+    @pytest.mark.asyncio
+    async def test_generate_key_helper_auto_generates_when_no_custom_key(self):
+        """
+        Test that generate_key_helper_fn auto-generates a key when no custom
+        key value is provided.
+        
+        This verifies the code path:
+        if token is None:
+            if key is not None:
+                ...
+            else:
+                token = f"sk-{secrets.token_urlsafe(...)}"  # <-- This path
+        """
+        import litellm.proxy.proxy_server as proxy_server
+        
+        mock_prisma_client = AsyncMock()
+        mock_insert_data = AsyncMock()
+        mock_insert_data.return_value = MagicMock(
+            token="sk-auto-generated",
+            created_at=None,
+            updated_at=None,
+            litellm_budget_table=None,
+        )
+        mock_prisma_client.insert_data = mock_insert_data
+        mock_prisma_client.db = MagicMock()
+        
+        original_prisma = getattr(proxy_server, 'prisma_client', None)
+        original_premium = getattr(proxy_server, 'premium_user', None)
+        
+        try:
+            proxy_server.prisma_client = mock_prisma_client
+            proxy_server.premium_user = False
+            
+            result = await generate_key_helper_fn(
+                request_type="key",
+                # No key parameter provided - should auto-generate
+                user_id="test-user",
+                models=["gpt-4"],
+            )
+            
+            insert_call_args = mock_insert_data.call_args
+            key_data = insert_call_args.kwargs.get("data", {})
+            
+            # The token should start with "sk-" and be auto-generated
+            token = key_data.get("token", "")
+            assert token.startswith("sk-"), f"Expected token to start with 'sk-', got: {token}"
+            # Auto-generated keys are longer (sk- + 32 chars from token_urlsafe)
+            assert len(token) > 20, f"Expected auto-generated token length > 20, got: {len(token)}"
+            
+        finally:
+            proxy_server.prisma_client = original_prisma
+            proxy_server.premium_user = original_premium

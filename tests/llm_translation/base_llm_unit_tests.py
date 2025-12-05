@@ -1444,9 +1444,12 @@ class BaseLLMChatTest(ABC):
             custom_llm_provider=provider,
             reasoning_effort="high",
         )
-        # either accepts reasoning effort or thinking budget
-        assert "reasoning_effort" in optional_params or "4096" in json.dumps(
-            optional_params
+        # either accepts reasoning effort or thinkingConfig (with thinkingBudget or thinkingLevel)
+        # Note: For Gemini 3+ models, thinkingLevel="high" is API default, so thinkingConfig may be empty
+        assert (
+            "reasoning_effort" in optional_params
+            or "thinkingConfig" in optional_params
+            or "thinkingBudget" in json.dumps(optional_params)
         )
 
         try:

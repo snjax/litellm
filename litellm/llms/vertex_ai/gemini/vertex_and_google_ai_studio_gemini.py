@@ -910,15 +910,27 @@ class VertexGeminiConfig(VertexAIBaseConfig, BaseConfig):
         if VertexGeminiConfig._is_gemini_3_or_newer(model):
             if "temperature" not in optional_params:
                 optional_params["temperature"] = 1.0
-            # Only add thinkingLevel if model supports it (exclude image models)
+            # For Gemini 3 models, default thinkingLevel is "high" (API default)
+            # If thinkingLevel is "high", don't send it - API uses default "high"
+            # But keep other thinkingConfig params like includeThoughts if present
             if "image" not in model.lower():
                 thinking_config = optional_params.get("thinkingConfig", {})
-                if (
-                    "thinkingLevel" not in thinking_config
-                    and "thinkingBudget" not in thinking_config
-                ):
-                    thinking_config["thinkingLevel"] = "low"
-                    optional_params["thinkingConfig"] = thinking_config
+                thinking_level = thinking_config.get("thinkingLevel")
+                
+                # Remove thinkingLevel if it's "high" (API default)
+                if thinking_level == "high":
+                    thinking_config.pop("thinkingLevel", None)
+                    # If thinkingConfig is now empty or only has includeThoughts=True (default),
+                    # remove the entire config
+                    if not thinking_config or thinking_config == {"includeThoughts": True}:
+                        optional_params.pop("thinkingConfig", None)
+                    else:
+                        optional_params["thinkingConfig"] = thinking_config
+                # If no thinkingLevel set and no thinkingBudget, don't add anything
+                # (API will use default "high")
+                elif thinking_level is None and "thinkingBudget" not in thinking_config:
+                    if not thinking_config:
+                        optional_params.pop("thinkingConfig", None)
 
         return optional_params
 

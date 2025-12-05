@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     libssl-dev \
     pkg-config \
+    curl \
+    wget \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --upgrade pip build
 

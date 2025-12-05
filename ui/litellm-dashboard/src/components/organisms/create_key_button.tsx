@@ -173,6 +173,7 @@ const CreateKey: React.FC<CreateKeyProps> = ({
   const [modelAliases, setModelAliases] = useState<{ [key: string]: string }>({});
   const [autoRotationEnabled, setAutoRotationEnabled] = useState<boolean>(false);
   const [rotationInterval, setRotationInterval] = useState<string>("30d");
+  const [useCustomKey, setUseCustomKey] = useState<boolean>(false);
 
   const handleOk = () => {
     setIsModalVisible(false);
@@ -183,6 +184,7 @@ const CreateKey: React.FC<CreateKeyProps> = ({
     setModelAliases({});
     setAutoRotationEnabled(false);
     setRotationInterval("30d");
+    setUseCustomKey(false);
   };
 
   const handleCancel = () => {
@@ -196,6 +198,7 @@ const CreateKey: React.FC<CreateKeyProps> = ({
     setModelAliases({});
     setAutoRotationEnabled(false);
     setRotationInterval("30d");
+    setUseCustomKey(false);
   };
 
   useEffect(() => {
@@ -630,6 +633,54 @@ const CreateKey: React.FC<CreateKeyProps> = ({
               >
                 <TextInput placeholder="" />
               </Form.Item>
+
+              {/* Custom Key Value Option */}
+              <Form.Item
+                className="mt-4"
+                label={
+                  <span>
+                    Custom Key Value{" "}
+                    <Tooltip title="Optionally specify your own key value instead of auto-generating one. Must start with 'sk-' and be at least 8 characters long.">
+                      <InfoCircleOutlined style={{ marginLeft: "4px" }} />
+                    </Tooltip>
+                  </span>
+                }
+              >
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={useCustomKey}
+                    onChange={(checked) => {
+                      setUseCustomKey(checked);
+                      if (!checked) {
+                        form.setFieldsValue({ key: undefined });
+                      }
+                    }}
+                  />
+                  <span className="text-sm text-gray-500">
+                    {useCustomKey ? "Using custom key" : "Auto-generate key"}
+                  </span>
+                </div>
+              </Form.Item>
+
+              {useCustomKey && (
+                <Form.Item
+                  name="key"
+                  rules={[
+                    { required: true, message: "Please enter a custom key value" },
+                    { min: 8, message: "Key must be at least 8 characters long" },
+                    {
+                      pattern: /^sk-/,
+                      message: "Key must start with 'sk-'",
+                    },
+                  ]}
+                  help="Must start with 'sk-' and be at least 8 characters"
+                >
+                  <TextInput
+                    type="password"
+                    placeholder="sk-your-custom-key-value"
+                  />
+                </Form.Item>
+              )}
 
               <Form.Item
                 label={
@@ -1216,6 +1267,7 @@ const CreateKey: React.FC<CreateKeyProps> = ({
                         form={form}
                         excludedFields={[
                           "key_alias",
+                          "key",
                           "team_id",
                           "models",
                           "duration",

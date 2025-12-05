@@ -1691,7 +1691,7 @@ def test_reasoning_effort_maps_to_thinking_level_gemini_3():
     assert result["thinkingConfig"]["thinkingLevel"] == "low"
     assert result["thinkingConfig"]["includeThoughts"] is True
 
-    # Test medium -> high + includeThoughts=True (medium not available yet)
+    # Test medium -> maps to "high", but "high" is NOT sent (API default)
     optional_params = {}
     non_default_params = {"reasoning_effort": "medium"}
     result = v.map_openai_params(
@@ -1700,10 +1700,10 @@ def test_reasoning_effort_maps_to_thinking_level_gemini_3():
         model=model,
         drop_params=False,
     )
-    assert result["thinkingConfig"]["thinkingLevel"] == "high"
-    assert result["thinkingConfig"]["includeThoughts"] is True
+    # thinkingConfig should NOT be present - "high" is API default
+    assert "thinkingConfig" not in result
 
-    # Test high -> high + includeThoughts=True
+    # Test high -> "high" is NOT sent (API default)
     optional_params = {}
     non_default_params = {"reasoning_effort": "high"}
     result = v.map_openai_params(
@@ -1712,8 +1712,8 @@ def test_reasoning_effort_maps_to_thinking_level_gemini_3():
         model=model,
         drop_params=False,
     )
-    assert result["thinkingConfig"]["thinkingLevel"] == "high"
-    assert result["thinkingConfig"]["includeThoughts"] is True
+    # thinkingConfig should NOT be present - "high" is API default
+    assert "thinkingConfig" not in result
 
     # Test disable -> low + includeThoughts=False (cannot fully disable in Gemini 3)
     optional_params = {}
@@ -2002,8 +2002,8 @@ def test_gemini_3_image_models_no_thinking_config():
 
 def test_gemini_3_text_models_get_thinking_config():
     """
-    Test that Gemini 3 text models DO receive automatic thinkingConfig.
-    This ensures we didn't break the existing behavior for non-image models.
+    Test that Gemini 3 text models do NOT receive thinkingConfig by default.
+    The API default is "high", so we don't send thinkingConfig at all.
     """
     from litellm.llms.vertex_ai.gemini.vertex_and_google_ai_studio_gemini import (
         VertexGeminiConfig,
@@ -2011,7 +2011,7 @@ def test_gemini_3_text_models_get_thinking_config():
 
     v = VertexGeminiConfig()
 
-    # Test gemini-3-pro-preview (text model, should get thinking)
+    # Test gemini-3-pro-preview (text model, default is "high" - not sent)
     model = "gemini-3-pro-preview"
     optional_params = {}
     non_default_params = {}
@@ -2023,9 +2023,8 @@ def test_gemini_3_text_models_get_thinking_config():
         drop_params=False,
     )
 
-    # Should have thinkingConfig automatically added
-    assert "thinkingConfig" in result
-    assert result["thinkingConfig"]["thinkingLevel"] == "low"
+    # thinkingConfig should NOT be present - API default is "high"
+    assert "thinkingConfig" not in result
     assert result["temperature"] == 1.0
 
 
