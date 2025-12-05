@@ -45,15 +45,39 @@ const AddCredentialsModal: React.FC<AddCredentialsModalProps> = ({
     form.resetFields();
   };
 
+  // Helper to check if a value is masked (contains asterisks pattern)
+  const isMaskedValue = (value: any): boolean => {
+    if (typeof value !== "string") return false;
+    return value.includes("****") || value.includes("***");
+  };
+
+  // Filter out masked values from credential values for edit mode
+  const getNonSensitiveValues = (credentialValues: Record<string, any>) => {
+    const sensitiveKeys = ["api_key", "token", "secret", "password", "authorization"];
+    const result: Record<string, any> = {};
+    
+    for (const [key, value] of Object.entries(credentialValues)) {
+      const isKeyLikelySensitive = sensitiveKeys.some(sk => key.toLowerCase().includes(sk));
+      // Skip sensitive keys or any masked values
+      if (isKeyLikelySensitive || isMaskedValue(value)) {
+        continue;
+      }
+      result[key] = value;
+    }
+    return result;
+  };
+
   useEffect(() => {
     if (existingCredential) {
+      // Don't pre-fill sensitive fields (like api_key) with masked values
+      // User should leave them blank to keep existing, or enter new value
+      const nonSensitiveValues = getNonSensitiveValues(existingCredential.credential_values || {});
+      
       form.setFieldsValue({
         credential_name: existingCredential.credential_name,
         custom_llm_provider: existingCredential.credential_info.custom_llm_provider,
-        api_base: existingCredential.credential_values.api_base,
-        api_version: existingCredential.credential_values.api_version,
-        base_model: existingCredential.credential_values.base_model,
-        api_key: existingCredential.credential_values.api_key,
+        // Only set non-sensitive values that aren't masked
+        ...nonSensitiveValues,
       });
       setSelectedProvider(existingCredential.credential_info.custom_llm_provider as Providers);
     }
@@ -123,6 +147,16 @@ const AddCredentialsModal: React.FC<AddCredentialsModalProps> = ({
             ))}
           </AntdSelect>
         </Form.Item>
+
+        {/* Hint for edit mode */}
+        {addOrEdit === "edit" && (
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+            <p className="text-sm text-blue-700">
+              <strong>Note:</strong> Leave sensitive fields (like API Key) blank to keep the existing value.
+              Only fill in fields you want to update.
+            </p>
+          </div>
+        )}
 
         <ProviderSpecificFields selectedProvider={selectedProvider} uploadProps={uploadProps} />
 
